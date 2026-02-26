@@ -6,7 +6,8 @@ def ensure_snmp_directory():
     snmp_dir = "/etc/snmp"
     if not os.path.exists(snmp_dir):
         print(f"El directorio {snmp_dir} no existe. Creando...")
-        os.makedirs(snmp_dir)
+        # Usamos `sudo` para asegurarnos de que el directorio se cree con permisos adecuados
+        subprocess.run(["sudo", "mkdir", "-p", snmp_dir], check=True)
 
 # Función para verificar si snmpd está instalado y si no, instalarlo
 def ensure_snmp_installed():
@@ -82,22 +83,25 @@ def configure_snmp():
     ensure_snmp_installed()
     
     # Abre y escribe el archivo de configuración SNMP
-    with open(config_file_path, 'w') as file:
-        file.write(snmp_config)
+    try:
+        with open(config_file_path, 'w') as file:
+            file.write(snmp_config)
 
-    print(f"Archivo SNMP configurado correctamente en {config_file_path}")
-    
-    # Verificar si el archivo fue creado correctamente
-    if os.path.exists(config_file_path):
-        # Verificar si contiene las configuraciones clave
-        with open(config_file_path, 'r') as file:
-            content = file.read()
-            if 'rocommunity     ifxcliente' in content and 'rwcommunity     ifxcliente' in content:
-                print("Configuración de SNMP verificada correctamente.")
-            else:
-                print("Error: No se encontraron configuraciones clave en el archivo.")
-    else:
-        print("Error: No se pudo crear el archivo SNMP.")
+        print(f"Archivo SNMP configurado correctamente en {config_file_path}")
+        
+        # Verificar si el archivo fue creado correctamente
+        if os.path.exists(config_file_path):
+            # Verificar si contiene las configuraciones clave
+            with open(config_file_path, 'r') as file:
+                content = file.read()
+                if 'rocommunity     ifxcliente' in content and 'rwcommunity     ifxcliente' in content:
+                    print("Configuración de SNMP verificada correctamente.")
+                else:
+                    print("Error: No se encontraron configuraciones clave en el archivo.")
+        else:
+            print("Error: No se pudo crear el archivo SNMP.")
+    except Exception as e:
+        print(f"Error al configurar SNMP: {e}")
 
 # Ejecutar la configuración
 if __name__ == "__main__":

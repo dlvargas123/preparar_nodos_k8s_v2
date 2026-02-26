@@ -1,3 +1,5 @@
+import os
+
 # Define la configuración SNMP en una cadena
 snmp_config = """
 ###############################################################################
@@ -53,7 +55,22 @@ syslocation     "IFX"
 config_file_path = "/etc/snmp/snmpd.conf"
 
 # Abre y escribe el archivo de configuración SNMP
-with open(config_file_path, 'w') as file:
-    file.write(snmp_config)
+try:
+    with open(config_file_path, 'w') as file:
+        file.write(snmp_config)
 
-print(f"Archivo SNMP configurado correctamente en {config_file_path}")
+    # Verificar si el archivo fue creado correctamente
+    if os.path.exists(config_file_path):
+        print(f"Archivo SNMP configurado correctamente en {config_file_path}")
+        
+        # Verificar si contiene una línea clave para asegurar que la configuración se haya realizado
+        with open(config_file_path, 'r') as file:
+            content = file.read()
+            if 'rocommunity     ifxcliente' in content and 'rwcommunity     ifxcliente' in content:
+                print("Configuración de SNMP verificada correctamente.")
+            else:
+                print("Error: No se encontraron configuraciones clave en el archivo.")
+    else:
+        print("Error: No se pudo crear el archivo SNMP.")
+except Exception as e:
+    print(f"Error al configurar SNMP: {e}")

@@ -20,7 +20,7 @@ def adjust_ownership(file_path, owner, group):
         subprocess.run(["sudo", "chown", f"{owner}:{group}", file_path], check=True)
         print(f"Propiedad ajustada para {file_path} a {owner}:{group}")
     except subprocess.CalledProcessError:
-        print(f"Error al ajustar propiedad para {file_path}")
+        print(f"Error al ajustar propiedad para {file_path} o archivo no encontrado")
 
 # Ajustar propiedades de archivos críticos
 for file in files:
@@ -38,7 +38,7 @@ def check_acls(file_path):
         else:
             print(f"Sin ACL permisiva en {file_path}")
     except subprocess.CalledProcessError:
-        print(f"Error al verificar ACLs para {file_path}")
+        print(f"Error al verificar ACLs para {file_path} o ACL no disponible")
 
 # Comprobar ACLs para todos los archivos
 for file in files:

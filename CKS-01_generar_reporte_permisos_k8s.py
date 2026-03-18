@@ -2,18 +2,18 @@ import os
 import stat
 import subprocess
 
-# Lista de archivos críticos de Kubernetes
+# Lista de archivos críticos para un clúster RKE2 con Rancher
 files = [
-    "/etc/kubernetes/manifests/kube-apiserver.yaml",
-    "/etc/kubernetes/manifests/kube-controller-manager.yaml",
-    "/etc/kubernetes/manifests/kube-scheduler.yaml",
-    "/etc/kubernetes/manifests/etcd.yaml",
+    "/etc/rancher/rke2/manifests/kube-apiserver.yaml",
+    "/etc/rancher/rke2/manifests/kube-controller-manager.yaml",
+    "/etc/rancher/rke2/manifests/kube-scheduler.yaml",
+    "/etc/rancher/rke2/manifests/etcd.yaml",
     "/etc/cni/net.d/",
-    "/var/lib/etcd/default.etcd",
-    "/etc/kubernetes/admin.conf",
-    "/etc/kubernetes/scheduler.conf",
-    "/etc/kubernetes/controller-manager.conf",
-    "/etc/kubernetes/pki/"
+    "/var/lib/rancher/rke2/etcd/default.etcd",
+    "/etc/rancher/rke2/rke2.yaml",
+    "/etc/rancher/rke2/controller-manager.conf",
+    "/etc/rancher/rke2/scheduler.conf",
+    "/etc/rancher/rke2/pki/"
 ]
 
 # Función para obtener los permisos de los archivos
@@ -29,7 +29,7 @@ def get_file_permissions(file_path):
 
 # Generar el reporte
 def generate_report():
-    report = "Reporte de permisos de archivos críticos de Kubernetes:\n\n"
+    report = "Reporte de permisos de archivos críticos de Kubernetes RKE2 con Rancher:\n\n"
     
     for file in files:
         permissions, owner, group = get_file_permissions(file)
@@ -39,10 +39,10 @@ def generate_report():
         report += f"Grupo (GID): {group}\n\n"
     
     # Guardar el reporte en un archivo
-    with open("/tmp/reporte_permisos_k8s.txt", "w") as f:
+    with open("/tmp/reporte_permisos_rke2_k8s.txt", "w") as f:
         f.write(report)
     
-    print("Reporte generado exitosamente en /tmp/reporte_permisos_k8s.txt")
+    print("Reporte generado exitosamente en /tmp/reporte_permisos_rke2_k8s.txt")
 
 # Llamar a la función para generar el reporte
 generate_report()

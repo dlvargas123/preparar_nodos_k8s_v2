@@ -1,0 +1,64 @@
+import subprocess
+import os
+from datetime import datetime
+
+# Configuración de búsqueda para RKE2
+CHECK_COMMAND = "ps -ef | grep kube-apiserver | grep -v grep"
+PLUGIN_TARGET = "EventRateLimit"
+CONFIG_FLAG = "--admission-control-config-file"
+REPORT_FILE = f"evidencia_event_rate_limit_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+
+def run_validation():
+    print(f"Iniciando validación de EventRateLimit en RKE2...")
+    
+    with open(REPORT_FILE, "w") as report:
+        report.write(f"REPORTE DE AUDITORÍA DE SEGURIDAD - {datetime.now()}\n")
+        report.write(f"CONTROL: Admission Plugin - EventRateLimit\n")
+        report.write(f"ENTORNO: Rancher RKE2 v1.32.13\n")
+        report.write("="*60 + "\n\n")
+
+        try:
+            # 1. Obtener el proceso activo
+            result = subprocess.run(CHECK_COMMAND, shell=True, capture_output=True, text=True)
+            process_output = result.stdout
+
+            # 2. Validar Plugin
+            plugin_status = "FALLO: EventRateLimit NO está en --enable-admission-plugins."
+            if PLUGIN_TARGET in process_output:
+                plugin_status = "PASÓ: EventRateLimit está habilitado."
+
+            # 3. Validar Archivo de Configuración
+            config_status = f"FALLO: No se detectó {CONFIG_FLAG}."
+            if CONFIG_FLAG in process_output:
+                parts = process_output.split(CONFIG_FLAG + "=")
+                config_path = parts[1].split(" ")[0].strip()
+                config_status = f"PASÓ: Configuración detectada en {config_path}."
+                if os.path.exists(config_path):
+                    config_status += " (Archivo validado físicamente)."
+                else:
+                    config_status += " (ADVERTENCIA: El archivo no existe en la ruta indicada)."
+
+            print(plugin_status)
+            print(config_status)
+            
+            report.write(f"ESTADO PLUGIN: {plugin_status}\n")
+            report.write(f"ESTADO CONFIG: {config_status}\n\n")
+            report.write(f"EVIDENCIA DEL PROCESO (ps):\n{process_output.strip()}\n\n")
+
+            # 4. Salud del API Server
+            report.write("-" * 30 + "\n")
+            report.write("VERIFICACIÓN DE PODS (KUBE-SYSTEM):\n")
+            pod_check = subprocess.run(["kubectl", "get", "pods", "-n", "kube-system", "-l", "component=kube-apiserver"], 
+                                      capture_output=True, text=True)
+            report.write(pod_check.stdout if pod_check.returncode == 0 else "kubectl no disponible.\n")
+
+        except Exception as e:
+            report.write(f"ERROR DURANTE LA VALIDACIÓN: {e}\n")
+
+    print(f"\nReporte de evidencia generado: {REPORT_FILE}")
+
+if __name__ == "__main__":
+    if os.geteuid() != 0:
+        print("Error: Se requiere root para inspeccionar el API Server.")
+    else:
+        run_validation()

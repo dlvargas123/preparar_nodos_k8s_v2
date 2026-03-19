@@ -1,6 +1,5 @@
 import os
 import stat
-import subprocess
 
 # Lista de archivos y directorios con los permisos deseados
 paths = {
@@ -15,17 +14,30 @@ paths = {
     "/etc/kubernetes/controller-manager.conf": "644",
 }
 
+# Inicializamos el reporte
+report = {
+    "found": [],
+    "not_found": [],
+    "changed": []
+}
+
 # Función para ajustar permisos y registrar evidencia
 def adjust_permissions(path, perms):
     # Comprobamos si el archivo o directorio existe
     if os.path.exists(path):
-        print(f"El archivo/directorio {path} existe. Ajustando permisos a {perms}...")
+        # Registro en "found" si existe
+        report["found"].append(path)
+
         # Convertimos los permisos a entero
         perm_int = int(perms, 8)
-        
+
         # Ajustamos los permisos
-        os.chmod(path, perm_int)
-        
+        current_permissions = oct(os.stat(path).st_mode)[-3:]
+        if current_permissions != perms:
+            os.chmod(path, perm_int)
+            # Registramos el cambio
+            report["changed"].append((path, current_permissions, perms))
+
         # Registramos la evidencia con el comando stat
         stat_info = os.stat(path)
         with open("/tmp/permisos_evidencia.txt", "a") as f:
@@ -35,17 +47,34 @@ def adjust_permissions(path, perms):
             f.write(f"  Last Accessed: {stat_info.st_atime}\n")
             f.write(f"  Last Modified: {stat_info.st_mtime}\n")
             f.write(f"  Last Status Change: {stat_info.st_ctime}\n\n")
+
         print(f"Permisos ajustados y evidencia registrada para {path}.")
     else:
+        # Registro en "not_found" si no existe
+        report["not_found"].append(path)
         print(f"El archivo/directorio {path} no existe. Saltando...")
 
 # Validamos y ajustamos los permisos para cada archivo/directorio en la lista
 for path, perms in paths.items():
     adjust_permissions(path, perms)
 
-# Mostrar el contenido de la evidencia registrada
-print("\nEvidencia de los permisos ajustados:")
-with open("/tmp/permisos_evidencia.txt", "r") as f:
+# Generar el reporte final
+with open("/tmp/reporte_ajustes_permisos.txt", "w") as f:
+    f.write("### Reporte de Archivos Encontrados ###\n")
+    for item in report["found"]:
+        f.write(f"Encontrado: {item}\n")
+    
+    f.write("\n### Archivos No Encontrados ###\n")
+    for item in report["not_found"]:
+        f.write(f"No encontrado: {item}\n")
+    
+    f.write("\n### Cambios Realizados ###\n")
+    for item in report["changed"]:
+        f.write(f"Archivo: {item[0]}, Permisos Anteriores: {item[1]}, Nuevos Permisos: {item[2]}\n")
+
+# Mostrar el contenido del reporte final
+print("\nReporte final generado en /tmp/reporte_ajustes_permisos.txt")
+with open("/tmp/reporte_ajustes_permisos.txt", "r") as f:
     print(f.read())
 
 print("Proceso de ajuste de permisos finalizado.")

@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import os
 import subprocess
 import sys
@@ -59,7 +60,9 @@ def main():
     header()
     reporte = []
 
-    # --- RECOLECCIÓN DE DATOS (INPUT UX) ---
+    # --- RECOLECCIÓN DE DATOS ---
+    
+    # 1. Red
     print_step("CONFIGURACIÓN DE RED")
     ifaces = [iface for iface in os.listdir('/sys/class/net/') if iface != 'lo']
     for i, iface in enumerate(ifaces): print(f"  {i}) {iface}")
@@ -75,47 +78,71 @@ def main():
     dns = input(f"{Color.AMARILLO}Servidores DNS (separados por coma): {Color.FIN}")
     dns_list = [d.strip() for d in dns.split(',')]
 
+    # 2. Fecha, Hora y NTP
+    print_step("CONFIGURACIÓN DE FECHA, HORA Y NTP")
+    tz = input(f"{Color.AMARILLO}Zona horaria (Enter para America/Bogota): {Color.FIN}").strip()
+    if not tz: tz = "America/Bogota"
+
+    ntp_servers = input(f"{Color.AMARILLO}Servidores NTP (Enter para default Ubuntu, o separa por espacio): {Color.FIN}").strip()
+
+    # 3. Hostname
     nuevo_h = ""
     if input(f"\n{Color.AMARILLO}¿Deseas cambiar el hostname? (s/n): {Color.FIN}").lower() == 's':
         nuevo_h = input(f"{Color.AMARILLO}Nuevo nombre de VM: {Color.FIN}")
 
+    # 4. Usuario y Seguridad
     user_creado = gestionar_usuario() if input(f"\n{Color.AMARILLO}¿Crear usuario admin? (s/n): {Color.FIN}").lower() == 's' else ""
-    sec_ssh = input(f"{Color.AMARILLO}¿Bloquear login de Root por SSH? (s/n): {Color.FIN}").lower() == 's'
+    sec_ssh = input(f"\n{Color.AMARILLO}¿Bloquear login de Root por SSH? (s/n): {Color.FIN}").lower() == 's'
 
-    # --- PROCESO TÉCNICO ---
+    # --- PROCESO TÉCNICO (APLICACIÓN) ---
     print_step("PROCESANDO CAMBIOS EN EL SISTEMA...")
 
-    # 1. Depuración Netplan
+    # A. Configurar Timezone y NTP
+    run_cmd(f"timedatectl set-timezone {tz}")
+    
+    if ntp_servers:
+        # Configurar servidores NTP específicos en timesyncd.conf
+        conf_ntp = f"[Time]\nNTP={ntp_servers}\n"
+        with open("/etc/systemd/timesyncd.conf", "w") as f:
+            f.write(conf_ntp)
+        run_cmd("systemctl restart systemd-timesyncd")
+        reporte.append(f"NTP: Configurado con {ntp_servers}")
+    else:
+        run_cmd("timedatectl set-ntp true")
+        reporte.append("NTP: Usando servidores por defecto")
+
+    reporte.append(f"Zona horaria establecida: {tz}")
+
+    # B. Depuración Netplan
     ruta = "/etc/netplan/"
     for archivo in os.listdir(ruta):
         if archivo.endswith(".yaml") and not archivo.endswith("-bck"):
             shutil.move(os.path.join(ruta, archivo), os.path.join(ruta, archivo + "-bck"))
     
-    # 2. Escritura Netplan
+    # C. Escritura Netplan
     with open("/etc/netplan/99-config-estatica.yaml", "w") as f:
         f.write(f"network:\n  version: 2\n  renderer: networkd\n  ethernets:\n    {interfaz}:\n      addresses: [{ip}]\n      routes: [{{to: default, via: {gw}}}]\n      nameservers: {{addresses: {dns_list}}}\n")
-    reporte.append(f"Red estática configurada en {interfaz}")
+    reporte.append(f"Red estática: {ip} en {interfaz}")
 
-    # 3. Hostname
+    # D. Hostname
     if nuevo_h:
         with open("/etc/hostname", "w") as f: f.write(nuevo_h + "\n")
         run_cmd(f"sed -i 's/127.0.1.1.*/127.0.1.1\t{nuevo_h}/g' /etc/hosts")
         run_cmd(f"hostnamectl set-hostname {nuevo_h}")
-        reporte.append(f"Hostname actualizado a '{nuevo_h}'")
+        reporte.append(f"Hostname: '{nuevo_h}'")
 
-    # 4. Seguridad SSH
+    # E. Seguridad SSH
     if sec_ssh:
         run_cmd("sed -i '/^PermitRootLogin/d' /etc/ssh/sshd_config")
         with open("/etc/ssh/sshd_config", "a") as f: f.write("\nPermitRootLogin no\n")
         run_cmd("systemctl restart ssh")
-        reporte.append("Acceso Root por SSH: DESHABILITADO")
+        reporte.append("Seguridad: Root SSH bloqueado")
 
-    # 5. MACHINE-ID (CONFIRMACIÓN DE COMANDOS SOLICITADOS)
-    # Ejecutando exactamente tu secuencia solicitada:
+    # F. MACHINE-ID (COMANDOS SOLICITADOS POR EL USUARIO)
     run_cmd("echo -n > /etc/machine-id")
     run_cmd("rm -f /var/lib/dbus/machine-id")
     run_cmd("ln -s /etc/machine-id /var/lib/dbus/machine-id")
-    reporte.append("Machine-ID reseteado y vinculado")
+    reporte.append("Machine-ID: Reseteado y vinculado")
 
     # --- CIERRE Y REPORTE ---
     print(f"\n{Color.BOLD}{'='*40}\n   RESUMEN DE OPERACIÓN\n{'='*40}{Color.FIN}")

@@ -5,7 +5,6 @@ import sys
 import os
 from pathlib import Path
 
-# --- UTILIDADES VISUALES ---
 class Cores:
     OKBLUE = '\033[94m'
     OKGREEN = '\033[92m'
@@ -14,45 +13,44 @@ class Cores:
     ENDC = '\033[0m'
     BOLD = '\033[1m'
 
-def run_command(cmd, input_data=None):
+def run_command(cmd, input_data=None, allow_fail=False):
     try:
-        result = subprocess.run(cmd, input=input_data, text=True, capture_output=True, check=True)
+        result = subprocess.run(cmd, input=input_data, text=True, capture_output=True, check=not allow_fail)
         return result.stdout.strip()
     except subprocess.CalledProcessError as e:
-        print(f"{Cores.FAIL}❌ Error: {e.stderr}{Cores.ENDC}")
-        sys.exit(1)
+        if not allow_fail:
+            print(f"{Cores.FAIL}❌ Error Crítico: {e.stderr}{Cores.ENDC}")
+            sys.exit(1)
+        return None
 
-def generate_dynamic_blacklist():
+def setup_strict_access():
     os.system('clear')
-    print(f"{Cores.OKBLUE}{Cores.BOLD}=== IFX CUSTOM BLACKLIST GENERATOR ==={Cores.ENDC}")
-    
-    # 1. Obtener todos los Namespaces
-    output = run_command(["kubectl", "get", "namespaces", "-o", "jsonpath={.items[*].metadata.name}"])
-    all_ns = output.split()
-    
-    print(f"\nSelecciona los namespaces que {Cores.BOLD}NO{Cores.ENDC} tendrán permisos (separa por comas, ej: 1,5,10):")
+    print(f"{Cores.OKBLUE}{Cores.BOLD}=== IFX STRICT SAFE-LOCK GENERATOR ==={Cores.ENDC}")
+
+    # 1. Obtener Namespaces
+    all_ns = run_command(["kubectl", "get", "namespaces", "-o", "jsonpath={.items[*].metadata.name}"]).split()
+
+    print(f"\nSelecciona los namespaces que serán {Cores.BOLD}BLOQUEADOS{Cores.ENDC} (Solo lectura/ocultos):")
     for i, ns in enumerate(all_ns, 1):
         print(f"{i:2}) {ns}")
-    
+
     choices = input(f"\n{Cores.WARNING}Números a BLOQUEAR: {Cores.ENDC}").split(',')
-    
     blacklist = []
     try:
         for c in choices:
-            idx = int(c.strip()) - 1
-            if 0 <= idx < len(all_ns):
-                blacklist.append(all_ns[idx])
-    except ValueError:
-        print(f"{Cores.FAIL}Entrada no válida. Usando lista vacía.{Cores.ENDC}")
+            if c.strip():
+                idx = int(c.strip()) - 1
+                if 0 <= idx < len(all_ns): blacklist.append(all_ns[idx])
+    except: pass
 
-    # 2. Configuración de Identidad
     sa_name = "ifx-custom-dev"
     main_ns = "default"
-    
-    print(f"\n{Cores.OKBLUE}ℹ️ Configurando acceso multiespacio...{Cores.ENDC}")
-    
-    # Crear SA y Token
-    sa_manifest = f"""
+    # Nombre del binding que vamos a controlar estrictamente
+    binding_name = f"{sa_name}-admin-binding"
+
+    # 2. CONFIGURACIÓN MÍNIMA GLOBAL (Solo para que Lens no muera)
+    # Quitamos pods, deployments y todo lo demás del scope global.
+    global_manifest = f"""
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -67,21 +65,49 @@ metadata:
   annotations:
     kubernetes.io/service-account.name: {sa_name}
 type: kubernetes.io/service-account-token
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {sa_name}-minimal-discovery
+rules:
+- apiGroups: [""]
+  resources: ["namespaces", "nodes"]
+  verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {sa_name}-minimal-discovery-binding
+subjects:
+- kind: ServiceAccount
+  name: {sa_name}
+  namespace: {main_ns}
+roleRef:
+  kind: ClusterRole
+  name: {sa_name}-minimal-discovery
+  apiGroup: rbac.authorization.k8s.io
 """
-    run_command(["kubectl", "apply", "-f", "-"], input_data=sa_manifest)
+    print(f"\n{Cores.OKBLUE}⚙️ Limpiando y aplicando base de seguridad...{Cores.ENDC}")
+    run_command(["kubectl", "apply", "-f", "-"], input_data=global_manifest)
 
-    # 3. Aplicar RoleBindings (Solo a los que NO están en blacklist)
+    # 3. APLICACIÓN SELECTIVA Y LIMPIEZA DE NAMESPACES
+    print(f"{Cores.OKBLUE}⚙️ Sincronizando permisos por Namespace...{Cores.ENDC}")
     for ns in all_ns:
         if ns in blacklist:
-            # Opcional: Podríamos borrar bindings viejos aquí si existieran
-            print(f"{Cores.FAIL}🚫 BLOQUEADO: {ns}{Cores.ENDC}")
+            # ELIMINAR CUALQUIER PERMISO PREVIO
+            run_command(["kubectl", "delete", "rolebinding", binding_name, "-n", ns], allow_fail=True)
+            # También intentamos borrar el de la versión anterior por si acaso
+            run_command(["kubectl", "delete", "rolebinding", f"{sa_name}-binding", "-n", ns], allow_fail=True)
+            print(f"{Cores.FAIL}🔒 BLOQUEADO Y LIMPIO: {ns}{Cores.ENDC}")
             continue
-        
+
+        # APLICAR ADMIN SOLO AQUÍ
         rbac = f"""
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: {sa_name}-binding
+  name: {binding_name}
   namespace: {ns}
 subjects:
 - kind: ServiceAccount
@@ -89,13 +115,13 @@ subjects:
   namespace: {main_ns}
 roleRef:
   kind: ClusterRole
-  name: edit
+  name: admin
   apiGroup: rbac.authorization.k8s.io
 """
         run_command(["kubectl", "apply", "-f", "-"], input_data=rbac)
-        print(f"{Cores.OKGREEN}✅ PERMITIDO: {ns}{Cores.ENDC}")
+        print(f"{Cores.OKGREEN}🔑 FULL ACCESS: {ns}{Cores.ENDC}")
 
-    # 4. Generar Archivo
+    # 4. GENERACIÓN DE KUBECONFIG
     server = run_command(["kubectl", "config", "view", "--minify", "-o", "jsonpath={.clusters[0].cluster.server}"])
     ca_data = run_command(["kubectl", "config", "view", "--minify", "--raw", "-o", "jsonpath={.clusters[0].cluster.certificate-authority-data}"])
     token_b64 = run_command(["kubectl", "-n", main_ns, "get", "secret", f"{sa_name}-token", "-o", "jsonpath={.data.token}"])
@@ -114,17 +140,19 @@ contexts:
   context:
     cluster: ifx-cloud
     user: {sa_name}
+    namespace: {all_ns[0] if all_ns else 'default'}
 current-context: ifx-access
 users:
 - name: {sa_name}
   user:
     token: {token}
 """
-    file_name = "ifx-custom-access.yaml"
+    file_name = "ifx-strict-access.yaml"
     Path(file_name).write_text(kubeconfig.strip())
     os.chmod(file_name, 0o600)
-    
-    print(f"\n{Cores.OKBLUE}🔥 Archivo '{file_name}' generado con éxito.{Cores.ENDC}")
+
+    print(f"\n{Cores.OKGREEN}{Cores.BOLD}🚀 CONFIGURACIÓN ESTRICTA GENERADA.{Cores.ENDC}")
+    print(f"{Cores.WARNING}IMPORTANTE: Borra el cluster de Lens y vuelve a importarlo con '{file_name}' para limpiar caché.{Cores.ENDC}")
 
 if __name__ == "__main__":
-    generate_dynamic_blacklist()
+    setup_strict_access()

@@ -23,18 +23,26 @@ def run_command(cmd, input_data=None, allow_fail=False):
             sys.exit(1)
         return None
 
-def setup_strict_access():
+def setup_custom_named_access():
     os.system('clear')
-    print(f"{Cores.OKBLUE}{Cores.BOLD}=== IFX STRICT SAFE-LOCK GENERATOR ==={Cores.ENDC}")
+    print(f"{Cores.OKBLUE}{Cores.BOLD}=== IFX CUSTOM RBAC GENERATOR ==={Cores.ENDC}")
 
-    # 1. Obtener Namespaces
+    # 1. Solicitar nombre personalizado
+    custom_name = input(f"\n{Cores.BOLD}Escribe el nombre para el ServiceAccount y las Reglas:{Cores.ENDC} ").strip().lower()
+    if not custom_name:
+        custom_name = "ifx-custom-dev"
+
+    # Limpiar espacios por guiones si el usuario se equivoca
+    custom_name = custom_name.replace(" ", "-")
+
+    # 2. Obtener Namespaces
     all_ns = run_command(["kubectl", "get", "namespaces", "-o", "jsonpath={.items[*].metadata.name}"]).split()
 
-    print(f"\nSelecciona los namespaces que serán {Cores.BOLD}BLOQUEADOS{Cores.ENDC} (Solo lectura/ocultos):")
+    print(f"\nSelecciona los namespaces a {Cores.BOLD}BLOQUEAR{Cores.ENDC}:")
     for i, ns in enumerate(all_ns, 1):
         print(f"{i:2}) {ns}")
 
-    choices = input(f"\n{Cores.WARNING}Números a BLOQUEAR: {Cores.ENDC}").split(',')
+    choices = input(f"\n{Cores.WARNING}Números a BLOQUEAR (separa por comas): {Cores.ENDC}").split(',')
     blacklist = []
     try:
         for c in choices:
@@ -43,33 +51,30 @@ def setup_strict_access():
                 if 0 <= idx < len(all_ns): blacklist.append(all_ns[idx])
     except: pass
 
-    sa_name = "ifx-custom-dev"
     main_ns = "default"
-    # Nombre del binding que vamos a controlar estrictamente
-    binding_name = f"{sa_name}-admin-binding"
+    binding_name = f"{custom_name}-admin-binding"
 
-    # 2. CONFIGURACIÓN MÍNIMA GLOBAL (Solo para que Lens no muera)
-    # Quitamos pods, deployments y todo lo demás del scope global.
+    # 3. CONFIGURACIÓN GLOBAL (Discovery)
     global_manifest = f"""
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: {sa_name}
+  name: {custom_name}
   namespace: {main_ns}
 ---
 apiVersion: v1
 kind: Secret
 metadata:
-  name: {sa_name}-token
+  name: {custom_name}-token
   namespace: {main_ns}
   annotations:
-    kubernetes.io/service-account.name: {sa_name}
+    kubernetes.io/service-account.name: {custom_name}
 type: kubernetes.io/service-account-token
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: {sa_name}-minimal-discovery
+  name: {custom_name}-minimal-discovery
 rules:
 - apiGroups: [""]
   resources: ["namespaces", "nodes"]
@@ -78,31 +83,27 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: {sa_name}-minimal-discovery-binding
+  name: {custom_name}-minimal-discovery-binding
 subjects:
 - kind: ServiceAccount
-  name: {sa_name}
+  name: {custom_name}
   namespace: {main_ns}
 roleRef:
   kind: ClusterRole
-  name: {sa_name}-minimal-discovery
+  name: {custom_name}-minimal-discovery
   apiGroup: rbac.authorization.k8s.io
 """
-    print(f"\n{Cores.OKBLUE}⚙️ Limpiando y aplicando base de seguridad...{Cores.ENDC}")
+    print(f"\n{Cores.OKBLUE}⚙️ Creando Identidad '{custom_name}' y base de seguridad...{Cores.ENDC}")
     run_command(["kubectl", "apply", "-f", "-"], input_data=global_manifest)
 
-    # 3. APLICACIÓN SELECTIVA Y LIMPIEZA DE NAMESPACES
-    print(f"{Cores.OKBLUE}⚙️ Sincronizando permisos por Namespace...{Cores.ENDC}")
+    # 4. APLICACIÓN SELECTIVA Y LIMPIEZA
     for ns in all_ns:
         if ns in blacklist:
-            # ELIMINAR CUALQUIER PERMISO PREVIO
+            # Limpiamos cualquier binding que use este nombre personalizado
             run_command(["kubectl", "delete", "rolebinding", binding_name, "-n", ns], allow_fail=True)
-            # También intentamos borrar el de la versión anterior por si acaso
-            run_command(["kubectl", "delete", "rolebinding", f"{sa_name}-binding", "-n", ns], allow_fail=True)
             print(f"{Cores.FAIL}🔒 BLOQUEADO Y LIMPIO: {ns}{Cores.ENDC}")
             continue
 
-        # APLICAR ADMIN SOLO AQUÍ
         rbac = f"""
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -111,7 +112,7 @@ metadata:
   namespace: {ns}
 subjects:
 - kind: ServiceAccount
-  name: {sa_name}
+  name: {custom_name}
   namespace: {main_ns}
 roleRef:
   kind: ClusterRole
@@ -121,10 +122,10 @@ roleRef:
         run_command(["kubectl", "apply", "-f", "-"], input_data=rbac)
         print(f"{Cores.OKGREEN}🔑 FULL ACCESS: {ns}{Cores.ENDC}")
 
-    # 4. GENERACIÓN DE KUBECONFIG
+    # 5. GENERACIÓN DE KUBECONFIG
     server = run_command(["kubectl", "config", "view", "--minify", "-o", "jsonpath={.clusters[0].cluster.server}"])
     ca_data = run_command(["kubectl", "config", "view", "--minify", "--raw", "-o", "jsonpath={.clusters[0].cluster.certificate-authority-data}"])
-    token_b64 = run_command(["kubectl", "-n", main_ns, "get", "secret", f"{sa_name}-token", "-o", "jsonpath={.data.token}"])
+    token_b64 = run_command(["kubectl", "-n", main_ns, "get", "secret", f"{custom_name}-token", "-o", "jsonpath={.data.token}"])
     token = base64.b64decode(token_b64).decode("utf-8")
 
     kubeconfig = f"""
@@ -136,23 +137,21 @@ clusters:
     certificate-authority-data: {ca_data}
     server: {server}
 contexts:
-- name: ifx-access
+- name: {custom_name}-context
   context:
     cluster: ifx-cloud
-    user: {sa_name}
-    namespace: {all_ns[0] if all_ns else 'default'}
-current-context: ifx-access
+    user: {custom_name}
+current-context: {custom_name}-context
 users:
-- name: {sa_name}
+- name: {custom_name}
   user:
     token: {token}
 """
-    file_name = "ifx-strict-access.yaml"
+    file_name = f"access-{custom_name}.yaml"
     Path(file_name).write_text(kubeconfig.strip())
     os.chmod(file_name, 0o600)
 
-    print(f"\n{Cores.OKGREEN}{Cores.BOLD}🚀 CONFIGURACIÓN ESTRICTA GENERADA.{Cores.ENDC}")
-    print(f"{Cores.WARNING}IMPORTANTE: Borra el cluster de Lens y vuelve a importarlo con '{file_name}' para limpiar caché.{Cores.ENDC}")
+    print(f"\n{Cores.OKGREEN}{Cores.BOLD}🚀 LISTO: Se creó el archivo '{file_name}'{Cores.ENDC}")
 
 if __name__ == "__main__":
-    setup_strict_access()
+    setup_custom_named_access()

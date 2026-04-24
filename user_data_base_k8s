@@ -1,0 +1,158 @@
+#cloud-config
+package_update: true
+package_upgrade: false
+
+packages:
+  - qemu-guest-agent
+  - curl
+  - ca-certificates
+  - python3
+
+users:
+  - name: ubuntu
+    gecos: Ubuntu User
+    groups: sudo
+    shell: /bin/bash
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    lock_passwd: false
+    plain_text_passwd: "ubuntu"
+
+chpasswd:
+  list: |
+    ubuntu:ubuntu
+  expire: False
+
+ssh_pwauth: true
+
+write_files:
+  - path: /etc/cloud/cloud.cfg.d/99-ubuntu-ssh.conf
+    permissions: "0644"
+    content: |
+      users:
+        - name: ubuntu
+          lock_passwd: false
+          gecos: Ubuntu User
+          shell: /bin/bash
+
+  - path: /usr/local/sbin/bootstrap-k8s-node.sh
+    permissions: "0755"
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+
+      LOG_FILE="/var/log/bootstrap-k8s-node.log"
+
+      exec > >(tee -a "$LOG_FILE") 2>&1
+
+      echo "=================================================="
+      echo "🚀 Inicio bootstrap nodo Kubernetes"
+      echo "Fecha: $(date)"
+      echo "Hostname: $(hostname)"
+      echo "=================================================="
+
+      echo ""
+      echo "📦 Discos detectados:"
+      lsblk -d -e 7,11 -o NAME,SIZE,TYPE || true
+
+      echo ""
+      echo "=================================================="
+      echo "💽 Paso 1: Preparando disco Longhorn"
+      echo "=================================================="
+
+      curl -fsSL https://github.com/dlvargas123/preparar_nodos_k8s_v2/raw/refs/heads/main/crear-disco-v2.py -o /tmp/crear-disco-v2.py
+
+      python3 -m py_compile /tmp/crear-disco-v2.py
+
+      DISK_INDEX=2 python3 /tmp/crear-disco-v2.py
+
+      echo ""
+      echo "✅ Validando montaje Longhorn"
+      df -hT /var/lib/longhorn
+      lsblk
+
+      echo ""
+      echo "=================================================="
+      echo "🧰 Paso 2: Preparando nodo para RKE2"
+      echo "=================================================="
+
+      curl -fsSL https://github.com/dlvargas123/preparar_nodos_k8s_v2/raw/refs/heads/main/preparar_nodos_k8s_v3.py -o /tmp/preparar_nodos_k8s_v3.py
+
+      python3 -m py_compile /tmp/preparar_nodos_k8s_v3.py
+
+      python3 /tmp/preparar_nodos_k8s_v3.py --timezone America/Bogota
+
+      echo ""
+      echo "=================================================="
+      echo "📋 Reporte generado por preparar_nodos_k8s_v3.py"
+      echo "=================================================="
+
+      LATEST_REPORT="$(ls -t /root/preparar-nodo-rke2-reporte-*.txt 2>/dev/null | head -1 || true)"
+
+      if [ -n "$LATEST_REPORT" ]; then
+        echo "📄 Último reporte: $LATEST_REPORT"
+        cat "$LATEST_REPORT"
+      else
+        echo "⚠️ No se encontró reporte TXT."
+      fi
+
+      echo ""
+      echo "=================================================="
+      echo "🔎 Validaciones finales"
+      echo "=================================================="
+
+      echo ""
+      echo "📌 Longhorn:"
+      df -hT /var/lib/longhorn || true
+
+      echo ""
+      echo "📌 Kernel modules:"
+      lsmod | grep -E 'overlay|br_netfilter' || true
+
+      echo ""
+      echo "📌 Sysctl Kubernetes:"
+      sysctl net.bridge.bridge-nf-call-iptables || true
+      sysctl net.bridge.bridge-nf-call-ip6tables || true
+      sysctl net.ipv4.ip_forward || true
+      sysctl vm.swappiness || true
+      sysctl fs.inotify.max_user_watches || true
+      sysctl fs.inotify.max_user_instances || true
+
+      echo ""
+      echo "📌 Herramientas:"
+      kubectl version --client=true || true
+      helm version || true
+
+      echo ""
+      echo "📌 Servicios:"
+      systemctl is-active chrony || true
+      systemctl is-active auditd || true
+      systemctl is-active sysstat || true
+      systemctl is-active watchdog || true
+      systemctl is-active qemu-guest-agent || true
+
+      echo ""
+      echo "=================================================="
+      echo "✅ Bootstrap nodo Kubernetes finalizado"
+      echo "Fecha: $(date)"
+      echo "Log principal: $LOG_FILE"
+      echo "=================================================="
+
+runcmd:
+  - - bash
+    - -c
+    - |
+      sed -i 's/^#PasswordAuthentication\s\+no/PasswordAuthentication yes/' /etc/ssh/sshd_config || true
+      sed -i 's/^PasswordAuthentication\s\+no/PasswordAuthentication yes/' /etc/ssh/sshd_config || true
+      systemctl restart sshd || systemctl restart ssh || true
+
+  - - systemctl
+    - enable
+    - --now
+    - qemu-guest-agent.service
+
+  - - bash
+    - -c
+    - |
+      /usr/local/sbin/bootstrap-k8s-node.sh
+
+final_message: "cloud-init completado. Revisa /var/log/bootstrap-k8s-node.log y /var/log/cloud-init-output.log"

@@ -1,0 +1,9 @@
+version: 2
+ethernets:
+  enp1s0:
+    dhcp4: false
+    addresses:
+      - 192.168.11.50/24   # <-- IP/mascara que quieras para ESTA VM
+    gateway4: 192.168.11.1 # <-- gateway de tu red
+    nameservers:
+      addresses: [8.8.8.8, 1.1.1.1]  # <-- DNS

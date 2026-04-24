@@ -155,7 +155,7 @@ def check_timezone_chrony(timezone):
     remediation = (
         f"timedatectl set-timezone {timezone} && "
         "apt-get update && "
-        "apt-get install -y chrony && "
+        "DEBIAN_FRONTEND=noninteractive apt-get install -y chrony && "
         "systemctl enable --now chrony"
     )
 
@@ -225,7 +225,7 @@ def check_services():
 
     remediation = (
         "apt-get update && "
-        "apt-get install -y auditd sysstat watchdog && "
+        "DEBIAN_FRONTEND=noninteractive apt-get install -y auditd sysstat watchdog && "
         "systemctl enable --now auditd || true && "
         "systemctl enable --now sysstat || true && "
         "systemctl enable --now watchdog || true"
@@ -306,13 +306,18 @@ def check_helm_installed():
     ok = bool(run_command("which helm"))
 
     remediation = (
+        "set -o pipefail && "
         "apt-get update && "
-        "apt-get install -y apt-transport-https ca-certificates curl gpg && "
-        "curl https://baltocdn.com/helm/signing.asc | gpg --dearmor | tee /usr/share/keyrings/helm.gpg > /dev/null && "
-        "echo \"deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/helm.gpg] https://baltocdn.com/helm/stable/debian/ all main\" "
-        "| tee /etc/apt/sources.list.d/helm-stable-debian.list && "
+        "DEBIAN_FRONTEND=noninteractive apt-get install -y curl gpg apt-transport-https ca-certificates && "
+        "install -d -m 0755 /usr/share/keyrings && "
+        "curl -fsSL https://packages.buildkite.com/helm-linux/helm-debian/gpgkey "
+        "| gpg --dearmor | tee /usr/share/keyrings/helm.gpg > /dev/null && "
+        "chmod 0644 /usr/share/keyrings/helm.gpg && "
+        "echo 'deb [signed-by=/usr/share/keyrings/helm.gpg] https://packages.buildkite.com/helm-linux/helm-debian/any/ any main' "
+        "| tee /etc/apt/sources.list.d/helm-stable-debian.list > /dev/null && "
         "apt-get update && "
-        "apt-get install -y helm"
+        "DEBIAN_FRONTEND=noninteractive apt-get install -y helm && "
+        "helm version"
     )
 
     return ok, remediation, "helm instalado en PATH"
